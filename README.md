@@ -1,5 +1,9 @@
 # NLP Final Project QA System
 
+## Demo
+
+- Streamlit Demo: https://nlpfinalproject-upb4xazc5pfxp9lsrauywe.streamlit.app/
+
 這個專案是一個以課程講義為知識來源的問答系統，前端使用 Streamlit。文件會先被解析與切塊，建立本地檢索索引；使用者提問後，系統會依照問題語言做不同的查詢前處理，再用 Whoosh 反向索引與 Whoosh BM25F 找出最相關的 chunks，最後由 Gemini 生成答案。
 
 ## 目前版本重點
