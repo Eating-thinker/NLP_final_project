@@ -1,0 +1,14 @@
+{
+  "project_id": "",
+  "location": "us-central1",
+  "gemini_model": "gemini-2.5-flash",
+  "index_access_password": "",
+  "documents_source": "english_docs",
+  "documents_folder": "./English_docs",
+  "embedding_model": "text-multilingual-embedding-002",
+  "chunk_size": 600,
+  "chunk_overlap": 100,
+  "vector_top_k": 6,
+  "bm25_top_k": 8,
+  "final_top_k": 6
+}

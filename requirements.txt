@@ -1,0 +1,11 @@
+streamlit==1.41.1
+chromadb==0.6.3
+requests>=2.31.0
+google-auth>=2.0.0
+google-cloud-aiplatform==1.71.1
+pypdf>=4.0.0
+python-docx==1.2.0
+odfpy>=1.4.1
+pywin32>=306; platform_system == "Windows"
+jieba>=0.42.1
+Whoosh>=2.7.4

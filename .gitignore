@@ -1,0 +1,10 @@
+.parse_tmp/
+data/chroma_db/
+data/bm25_chunks.jsonl
+data/bm25_cache.pkl
+data/whoosh_index/
+data/.gcp_service_account.json
+settings.json
+__pycache__/
+.streamlit/
+.venv/
