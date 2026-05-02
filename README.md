@@ -140,7 +140,12 @@ streamlit run app.py
 
 1. 本機開發：
    - 使用 Application Default Credentials (ADC)
-   - 透過 `gcloud auth application-default login` 取得
+   - 透過以下指令設定：
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project <YOUR_GCP_PROJECT_ID>
+```
 
 2. Streamlit Community Cloud：
    - 使用 `st.secrets["gcp_service_account"]`

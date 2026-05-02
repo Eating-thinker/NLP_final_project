@@ -63,14 +63,28 @@ def save_settings(settings: dict) -> None:
     SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def get_streamlit_secret(name: str):
+    local_secret_paths = [
+        Path.home() / ".streamlit" / "secrets.toml",
+        APP_DIR / ".streamlit" / "secrets.toml",
+    ]
+    should_try_streamlit_secrets = any(path.exists() for path in local_secret_paths) or bool(
+        os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get("STREAMLIT_CLOUD")
+    )
+    if not should_try_streamlit_secrets:
+        return None
+
+    try:
+        return st.secrets.get(name)
+    except Exception:
+        return None
+
+
 def ensure_google_application_credentials() -> None:
     if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         return
 
-    try:
-        service_account_secret = st.secrets.get("gcp_service_account")
-    except Exception:
-        service_account_secret = None
+    service_account_secret = get_streamlit_secret("gcp_service_account")
 
     if not service_account_secret:
         return
@@ -86,6 +100,32 @@ def ensure_google_application_credentials() -> None:
         encoding="utf-8",
     )
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(SECRETS_CREDENTIALS_PATH)
+
+
+def resolve_google_project_id(settings: dict) -> str:
+    configured_project_id = settings.get("project_id", "").strip()
+    if configured_project_id:
+        return configured_project_id
+
+    service_account_secret = get_streamlit_secret("gcp_service_account")
+
+    if service_account_secret:
+        if isinstance(service_account_secret, str):
+            secret_payload = json.loads(service_account_secret)
+        else:
+            secret_payload = dict(service_account_secret)
+        return str(secret_payload.get("project_id", "")).strip()
+
+    try:
+        ensure_google_application_credentials()
+        import google.auth
+
+        _, detected_project_id = google.auth.default(scopes=GOOGLE_AUTH_SCOPES)
+        return str(detected_project_id or "").strip()
+    except Exception:
+        pass
+
+    return ""
 
 
 GOOGLE_AUTH_SCOPES = [
@@ -500,6 +540,8 @@ def load_embedder(project_id: str, location: str, model_name: str):
 
     ensure_google_application_credentials()
 
+    resolved_project_id = project_id.strip() or resolve_google_project_id({})
+
     class VertexEmbeddingClient:
         def __init__(self, project_id: str, location: str, model_id: str):
             self.project_id = project_id
@@ -545,7 +587,7 @@ def load_embedder(project_id: str, location: str, model_name: str):
                 all_vectors.extend(vectors)
             return all_vectors
 
-    return VertexEmbeddingClient(project_id, location, model_name)
+    return VertexEmbeddingClient(resolved_project_id, location, model_name)
 
 
 def normalize_vector(vector: list[float]) -> list[float]:
@@ -695,11 +737,11 @@ def generate_gemini_text(prompt: str, settings: dict, temperature: float = 0.2) 
 
     ensure_google_application_credentials()
 
-    project_id = settings.get("project_id", "").strip()
+    project_id = resolve_google_project_id(settings)
     location = settings.get("location", "us-central1").strip() or "us-central1"
     model = settings.get("gemini_model", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
     if not project_id:
-        return "尚未設定 GCP project_id，請先在左側填入。"
+        return "尚未取得 GCP project_id，請確認 settings.json 或 Streamlit secrets 中的 gcp_service_account 設定。"
 
     creds, _ = google.auth.default(scopes=GOOGLE_AUTH_SCOPES)
     auth_req = google.auth.transport.requests.Request()
