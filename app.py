@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import time
 import zipfile
+import csv
+import io
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -879,6 +881,92 @@ def answer_with_gemini(question: str, context: str, settings: dict) -> str:
     return generate_gemini_text(prompt, settings, temperature=0.2)
 
 
+def decode_text_with_fallback(raw_bytes: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp950", "big5", "utf-16", "latin1"):
+        try:
+            return raw_bytes.decode(encoding)
+        except Exception:
+            continue
+    return raw_bytes.decode("utf-8", errors="ignore")
+
+
+def parse_questions_csv_bytes(raw_bytes: bytes) -> tuple[list[dict[str, str]], str]:
+    text = decode_text_with_fallback(raw_bytes)
+    reader = csv.reader(io.StringIO(text))
+    rows = [[cell.strip() for cell in row] for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return [], "question"
+
+    max_columns = max(len(row) for row in rows)
+    normalized_rows = [row + [""] * (max_columns - len(row)) for row in rows]
+    header_aliases = {
+        "question",
+        "questions",
+        "query",
+        "prompt",
+        "\u554f\u984c",
+        "\u984c\u76ee",
+        "\u554f\u53e5",
+    }
+    first_row = normalized_rows[0]
+    detected_question_index = next(
+        (index for index, value in enumerate(first_row) if value.strip().lower() in header_aliases),
+        None,
+    )
+
+    if detected_question_index is not None:
+        headers = [value or f"column_{index + 1}" for index, value in enumerate(first_row)]
+        records = [
+            {headers[index]: row[index] for index in range(len(headers))}
+            for row in normalized_rows[1:]
+        ]
+        return records, headers[detected_question_index]
+
+    if max_columns == 1:
+        return [{"question": row[0]} for row in normalized_rows], "question"
+
+    headers = [f"column_{index + 1}" for index in range(max_columns)]
+    records = [{headers[index]: row[index] for index in range(max_columns)} for row in normalized_rows]
+    return records, headers[0]
+
+
+def load_questions_csv_from_path(path_text: str) -> tuple[list[dict[str, str]], str]:
+    csv_path = Path(path_text.strip())
+    raw_bytes = csv_path.read_bytes()
+    return parse_questions_csv_bytes(raw_bytes)
+
+
+def get_default_batch_csv_path() -> str:
+    csv_files = sorted(APP_DIR.glob("*.csv"))
+    if csv_files:
+        return str(csv_files[0])
+    return ""
+
+
+def build_batch_answer_csv(rows: list[dict[str, str]], question_key: str, settings: dict) -> bytes:
+    output = io.StringIO()
+    fieldnames = list(rows[0].keys()) + ["answer"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+
+    progress = st.progress(0.0, text="正在批次回答問題...")
+    status = st.empty()
+
+    for index, row in enumerate(rows, start=1):
+        question = row.get(question_key, "").strip()
+        progress.progress((index - 1) / len(rows), text=f"正在回答第 {index}/{len(rows)} 題")
+        if not question:
+            answer = ""
+        else:
+            result = ask_rag(question, settings)
+            answer = result["answer"]
+        writer.writerow(row | {"answer": answer})
+        status.caption(f"已完成 {index}/{len(rows)} 題")
+
+    progress.progress(1.0, text="批次回答完成")
+    return output.getvalue().encode("utf-8-sig")
+
+
 def ask_rag(question: str, settings: dict) -> dict:
     total_started = time.perf_counter()
     retrieval_question = question
@@ -1067,6 +1155,60 @@ def render_qa_panel(settings: dict) -> None:
                 st.markdown(f"**[{idx}] {hit['meta']['source']}**")
                 st.caption(f"chunk_id={hit['meta']['chunk_id']}")
                 st.write(hit["text"])
+
+
+    st.markdown("---")
+    st.subheader("CSV 批次問答")
+    st.caption("可上傳 CSV，或直接輸入本機 CSV 路徑。系統會逐題回答並產生可下載的結果 CSV。")
+
+    uploaded_csv = st.file_uploader("上傳問題 CSV", type=["csv"], key="batch_questions_csv")
+    csv_path_text = st.text_input(
+        "或輸入本機 CSV 路徑",
+        value=get_default_batch_csv_path(),
+        key="batch_questions_csv_path",
+    )
+
+    if st.button("開始批次回答 CSV", use_container_width=True):
+        if count_indexed_chunks() == 0:
+            st.warning("請先建立索引，再進行 CSV 批次問答。")
+            return
+
+        try:
+            if uploaded_csv is not None:
+                rows, question_key = parse_questions_csv_bytes(uploaded_csv.getvalue())
+                output_name = f"{Path(uploaded_csv.name).stem}_answers.csv"
+            elif csv_path_text.strip():
+                csv_path = Path(csv_path_text.strip())
+                if not csv_path.exists():
+                    st.error(f"找不到 CSV 檔案：{csv_path}")
+                    return
+                rows, question_key = load_questions_csv_from_path(csv_path_text)
+                output_name = f"{csv_path.stem}_answers.csv"
+            else:
+                st.warning("請先上傳 CSV，或輸入有效的 CSV 路徑。")
+                return
+        except Exception as exc:
+            st.error(f"讀取 CSV 失敗：{exc}")
+            return
+
+        if not rows:
+            st.warning("CSV 內沒有可處理的問題。")
+            return
+
+        try:
+            csv_bytes = build_batch_answer_csv(rows, question_key, settings)
+        except Exception as exc:
+            st.error(f"批次回答失敗：{exc}")
+            return
+
+        st.success(f"批次回答完成，共處理 {len(rows)} 題。")
+        st.download_button(
+            "下載回答結果 CSV",
+            data=csv_bytes,
+            file_name=output_name,
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 
 def main() -> None:

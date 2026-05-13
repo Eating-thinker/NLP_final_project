@@ -4,12 +4,13 @@
 
 - Streamlit Demo: https://nlpfinalproject-upb4xazc5pfxp9lsrauywe.streamlit.app/
 
-這個專案是一個以課程講義為知識來源的問答系統，前端使用 Streamlit。文件會先被解析與切塊，建立本地檢索索引；使用者提問後，系統會依照問題語言做不同的查詢前處理，再用 Whoosh 反向索引與 Whoosh BM25F 找出最相關的 chunks，最後由 Gemini 生成答案。
+這個專案是一個以課程講義為知識來源的問答系統，前端使用 Streamlit。文件會先被解析與切塊，建立本地檢索索引；使用者提問後，系統會依照問題語言做不同的查詢前處理，再用 Whoosh 反向索引與 Whoosh BM25F 找出最相關的 chunks，最後由 Gemini 生成答案。除了單題互動式問答之外，現在也支援匯入 `.csv` 批次問題檔，逐題作答後回傳結果 `.csv`。
 
 ## 目前版本重點
 
 - 文件來源以英文教材為主，例如 `English_docs/`
 - 使用者可以用中文或英文提問
+- 支援單題問答與 `.csv` 批次問答兩種模式
 - 中文問題：
   - 一次 Gemini 呼叫，同時回傳英文檢索句與關鍵字
 - 英文問題：
@@ -21,6 +22,7 @@
 - 回答會跟隨使用者語言：
   - 中文問題回繁體中文
   - 英文問題回英文
+- CSV 批次問答會保留原始欄位，並額外輸出 `answer` 欄位
 
 ## 系統流程
 
@@ -44,16 +46,23 @@
    - 用 Whoosh 的 BM25F 在候選集合上做 top-k 排名
    - 取前 10 個 chunks 作為回答參考
    - 交給 Gemini 生成最終答案
+6. 若使用者提供 `.csv` 問題檔：
+   - 讀取 CSV 內容
+   - 自動判斷問題欄位
+   - 逐題重複上述 RAG 流程
+   - 將答案寫入新的 `answer` 欄位並輸出結果 CSV
 
 ## 目前檢索與回答策略
 
 - `parse_file()`：負責解析 PDF / DOCX / DOC / ODT / TXT
 - `chunk_text()`：將文件內容切成可檢索的文字片段
 - `build_whoosh_index()`：建立套件版反向索引
+- `parse_questions_csv_bytes()`：解析上傳或本機路徑的 CSV 問題檔
 - `preprocess_cjk_question_for_retrieval()`：中文問題一次完成英文檢索句與關鍵字前處理
 - `search_whoosh_candidates()`：用關鍵字從 Whoosh 找候選 chunks
 - `search_whoosh_bm25()`：用 Whoosh BM25F 對候選 chunks 做 top-k 排名
 - `answer_with_gemini()`：根據問題與前 10 個 chunks 生成回答
+- `build_batch_answer_csv()`：逐題回答並產生可下載的結果 CSV
 
 補充：
 
@@ -196,12 +205,52 @@ universe_domain = "googleapis.com"
 
 1. 啟動 app 後，系統會直接使用 `settings.json` 的預設設定
 2. 問答介面是 demo 預設首頁
-3. 若要更新資料，進入「建立索引」頁
-4. 建立索引前可先用「測試解析與切塊」檢查文件
-5. 按下「重新建立索引」後，系統會重建：
+3. 在問答頁上半部可直接進行單題提問
+4. 在問答頁下半部可使用「CSV 批次問答」：
+   - 上傳 `.csv` 檔案，或輸入本機 `.csv` 路徑
+   - 按下「開始批次回答 CSV」
+   - 完成後下載結果 `.csv`
+5. 若要更新資料，進入「建立索引」頁
+6. 建立索引前可先用「測試解析與切塊」檢查文件
+7. 按下「重新建立索引」後，系統會重建：
    - `bm25_chunks.jsonl`
    - `whoosh_index`
-6. 回到問答頁直接提問
+8. 回到問答頁直接提問，或執行 CSV 批次問答
+
+## CSV 批次問答格式
+
+- 支援上傳 `.csv`，也支援直接輸入本機檔案路徑
+- 若 CSV 第一列是欄位名稱，系統會優先尋找這些問題欄位名稱：
+  - `question`
+  - `questions`
+  - `query`
+  - `prompt`
+  - `問題`
+  - `題目`
+  - `問句`
+- 若 CSV 沒有欄位名稱且只有單欄，系統會把每一列視為一個問題
+- 若 CSV 有多欄但沒有明確欄位名稱，系統預設使用第一欄作為問題欄位
+
+範例一：單欄、無 header
+
+```csv
+什麼是 Time-homogeneous Markov process？
+幾月幾號是期中考？
+```
+
+範例二：有 header
+
+```csv
+question
+什麼是 Time-homogeneous Markov process？
+幾月幾號是期中考？
+```
+
+輸出格式：
+
+- 系統會保留原始欄位
+- 另外新增一欄 `answer`
+- 下載檔名格式預設為 `<原檔名>_answers.csv`
 
 ## Demo 設計
 
