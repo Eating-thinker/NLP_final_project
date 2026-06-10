@@ -950,6 +950,7 @@ def build_batch_answer_csv(rows: list[dict[str, str]], question_key: str, settin
     fieldnames = list(rows[0].keys()) + ["answer"]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
+    cached_answers: dict[str, str] = {}
 
     progress = st.progress(0.0, text="正在批次回答問題...")
     status = st.empty()
@@ -960,8 +961,13 @@ def build_batch_answer_csv(rows: list[dict[str, str]], question_key: str, settin
         if not question:
             answer = ""
         else:
-            result = ask_rag(question, settings)
-            answer = result["answer"]
+            cache_key = re.sub(r"\s+", " ", question)
+            if cache_key in cached_answers:
+                answer = cached_answers[cache_key]
+            else:
+                result = ask_rag(question, settings)
+                answer = result["answer"]
+                cached_answers[cache_key] = answer
         writer.writerow(row | {"answer": answer})
         status.caption(f"已完成 {index}/{len(rows)} 題")
 
