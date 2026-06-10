@@ -474,32 +474,35 @@ def build_whoosh_index(rows: list[dict]) -> None:
     writer.commit()
 
 
+def build_whoosh_or_query(field_name: str, values: list[str]):
+    from whoosh.query import Every, Or, Term
+
+    terms: list[str] = []
+    for value in values:
+        terms.extend(tokenize(value))
+
+    unique_terms = [term for term in dict.fromkeys(terms) if term]
+    if not unique_terms:
+        return Every()
+
+    return Or([Term(field_name, term) for term in unique_terms])
+
+
 def search_whoosh_candidates(keywords: list[str], limit: int) -> list[int]:
     from whoosh import index
-    from whoosh.qparser import OrGroup, QueryParser
-    from whoosh.query import Or, Term
 
     if not WHOOSH_INDEX_DIR.exists() or not keywords:
         return []
 
-    candidate_tokens: list[str] = []
-    for keyword in keywords:
-        candidate_tokens.extend(tokenize(keyword))
-    candidate_tokens = [token for token in candidate_tokens if token]
-    if not candidate_tokens:
-        return []
-
     ix = index.open_dir(str(WHOOSH_INDEX_DIR))
     with ix.searcher() as searcher:
-        parser = QueryParser("keywords", schema=ix.schema, group=OrGroup)
-        query = parser.parse(" ".join(sorted(set(candidate_tokens))))
+        query = build_whoosh_or_query("keywords", keywords)
         results = searcher.search(query, limit=limit)
         return [int(hit["doc_id"]) for hit in results]
 
 
 def search_whoosh_bm25(question: str, candidate_ids: list[int], top_k: int) -> list[dict]:
     from whoosh import index, scoring
-    from whoosh.qparser import OrGroup, QueryParser
     from whoosh.query import Or, Term
 
     if not WHOOSH_INDEX_DIR.exists():
@@ -511,8 +514,7 @@ def search_whoosh_bm25(question: str, candidate_ids: list[int], top_k: int) -> l
 
     ix = index.open_dir(str(WHOOSH_INDEX_DIR))
     with ix.searcher(weighting=scoring.BM25F()) as searcher:
-        parser = QueryParser("content", schema=ix.schema, group=OrGroup)
-        query = parser.parse(" ".join(query_tokens))
+        query = build_whoosh_or_query("content", query_tokens)
         filter_query = None
         if candidate_ids:
             filter_query = Or([Term("doc_id", str(doc_id)) for doc_id in candidate_ids])
